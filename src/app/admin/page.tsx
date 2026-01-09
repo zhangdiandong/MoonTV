@@ -643,6 +643,17 @@ const VideoSourceConfig = ({
   const [sources, setSources] = useState<DataSource[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [orderChanged, setOrderChanged] = useState(false);
+  const [isCheckingSources, setIsCheckingSources] = useState(false);
+  const [checkResults, setCheckResults] = useState<
+    Record<
+      string,
+      {
+        status: 'checking' | 'ok' | 'error';
+        message: string;
+        duration?: number;
+      }
+    >
+  >({});
   const [newSource, setNewSource] = useState<DataSource>({
     name: '',
     key: '',
@@ -758,6 +769,65 @@ const VideoSourceConfig = ({
       });
   };
 
+  const checkSingleSource = async (source: DataSource) => {
+    const key = source.key;
+    const start = Date.now();
+    try {
+      const resp = await fetch(
+        `/api/search/one?q=${encodeURIComponent('MoonTV')}&resourceId=${encodeURIComponent(
+          key
+        )}`
+      );
+      const duration = Date.now() - start;
+      if (resp.ok) {
+        setCheckResults((prev) => ({
+          ...prev,
+          [key]: {
+            status: 'ok',
+            message: `正常，耗时 ${duration}ms`,
+            duration,
+          },
+        }));
+      } else {
+        setCheckResults((prev) => ({
+          ...prev,
+          [key]: {
+            status: 'error',
+            message: `接口返回状态码 ${resp.status}`,
+            duration,
+          },
+        }));
+      }
+    } catch {
+      const duration = Date.now() - start;
+      setCheckResults((prev) => ({
+        ...prev,
+        [key]: {
+          status: 'error',
+          message: '请求失败或超时',
+          duration,
+        },
+      }));
+    }
+  };
+
+  const handleCheckAllSources = async () => {
+    if (!sources.length || isCheckingSources) return;
+    setIsCheckingSources(true);
+    setCheckResults((prev) => {
+      const next = { ...prev };
+      sources.forEach((s) => {
+        next[s.key] = {
+          status: 'checking',
+          message: '检测中...',
+        };
+      });
+      return next;
+    });
+    await Promise.all(sources.map((s) => checkSingleSource(s)));
+    setIsCheckingSources(false);
+  };
+
   // 可拖拽行封装 (dnd-kit)
   const DraggableRow = ({ source }: { source: DataSource }) => {
     const { attributes, listeners, setNodeRef, transform, transition } =
@@ -767,6 +837,21 @@ const VideoSourceConfig = ({
       transform: CSS.Transform.toString(transform),
       transition,
     } as React.CSSProperties;
+
+    const result = checkResults[source.key];
+    const statusClass =
+      result?.status === 'ok'
+        ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300'
+        : result?.status === 'error'
+        ? 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300'
+        : 'bg-gray-100 dark:bg-gray-900/20 text-gray-800 dark:text-gray-200';
+    const statusText = result
+      ? result.status === 'checking'
+        ? '检测中...'
+        : result.status === 'ok'
+        ? '可用'
+        : '异常'
+      : '未检测';
 
     return (
       <tr
@@ -811,6 +896,14 @@ const VideoSourceConfig = ({
             {!source.disabled ? '启用中' : '已禁用'}
           </span>
         </td>
+        <td className='px-6 py-4 whitespace-nowrap'>
+          <span
+            className={`px-2 py-1 text-xs rounded-full inline-block ${statusClass}`}
+            title={result?.message || ''}
+          >
+            {statusText}
+          </span>
+        </td>
         <td className='px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2'>
           <button
             onClick={() => handleToggleEnable(source.key)}
@@ -850,12 +943,21 @@ const VideoSourceConfig = ({
         <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
           视频源列表
         </h4>
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className='px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors'
-        >
-          {showAddForm ? '取消' : '添加视频源'}
-        </button>
+        <div className='flex items-center gap-3'>
+          <button
+            onClick={handleCheckAllSources}
+            disabled={isCheckingSources || !sources.length}
+            className='px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm rounded-lg transition-colors'
+          >
+            {isCheckingSources ? '检测中...' : '检测所有资源'}
+          </button>
+          <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className='px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors'
+          >
+            {showAddForm ? '取消' : '添加视频源'}
+          </button>
+        </div>
       </div>
 
       {showAddForm && (
@@ -930,6 +1032,9 @@ const VideoSourceConfig = ({
               </th>
               <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 状态
+              </th>
+              <th className='px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
+                检测结果
               </th>
               <th className='px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider'>
                 操作
