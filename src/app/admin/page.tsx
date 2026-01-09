@@ -773,18 +773,33 @@ const VideoSourceConfig = ({
     const key = source.key;
     const start = Date.now();
     try {
-      const resp = await fetch(
-        `/api/search/one?q=${encodeURIComponent('MoonTV')}&resourceId=${encodeURIComponent(
-          key
-        )}`
-      );
+      const resp = await fetch('/api/admin/source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'check', key }),
+      });
       const duration = Date.now() - start;
-      if (resp.ok) {
+      if (!resp.ok) {
+        setCheckResults((prev) => ({
+          ...prev,
+          [key]: {
+            status: 'error',
+            message: `检测接口返回状态码 ${resp.status}`,
+            duration,
+          },
+        }));
+        return;
+      }
+      const data = await resp.json().catch(() => null);
+      if (data && data.ok) {
         setCheckResults((prev) => ({
           ...prev,
           [key]: {
             status: 'ok',
-            message: `正常，耗时 ${duration}ms`,
+            message:
+              typeof data.status === 'number'
+                ? `API 可访问，状态码 ${data.status}，耗时 ${duration}ms`
+                : `API 可访问，耗时 ${duration}ms`,
             duration,
           },
         }));
@@ -793,7 +808,10 @@ const VideoSourceConfig = ({
           ...prev,
           [key]: {
             status: 'error',
-            message: `接口返回状态码 ${resp.status}`,
+            message:
+              data && data.error
+                ? data.error
+                : `API 不可访问，耗时 ${duration}ms`,
             duration,
           },
         }));

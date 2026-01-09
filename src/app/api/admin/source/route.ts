@@ -9,8 +9,7 @@ import { IStorage } from '@/lib/types';
 
 export const runtime = 'edge';
 
-// 支持的操作类型
-type Action = 'add' | 'disable' | 'enable' | 'delete' | 'sort';
+type Action = 'add' | 'disable' | 'enable' | 'delete' | 'sort' | 'check';
 
 interface BaseBody {
   action?: Action;
@@ -38,22 +37,73 @@ export async function POST(request: NextRequest) {
     const username = authInfo.username;
 
     // 基础校验
-    const ACTIONS: Action[] = ['add', 'disable', 'enable', 'delete', 'sort'];
+    const ACTIONS: Action[] = [
+      'add',
+      'disable',
+      'enable',
+      'delete',
+      'sort',
+      'check',
+    ];
     if (!username || !action || !ACTIONS.includes(action)) {
       return NextResponse.json({ error: '参数格式错误' }, { status: 400 });
     }
 
-    // 获取配置与存储
     const adminConfig = await getConfig();
     const storage: IStorage | null = getStorage();
 
-    // 权限与身份校验
     if (username !== process.env.USERNAME) {
       const userEntry = adminConfig.UserConfig.Users.find(
         (u) => u.username === username
       );
       if (!userEntry || userEntry.role !== 'admin') {
         return NextResponse.json({ error: '权限不足' }, { status: 401 });
+      }
+    }
+
+    if (action === 'check') {
+      const { key } = body as { key?: string };
+      if (!key) {
+        return NextResponse.json({ error: '缺少 key 参数' }, { status: 400 });
+      }
+      const entry = adminConfig.SourceConfig.find((s) => s.key === key);
+      if (!entry || !entry.api) {
+        return NextResponse.json({ error: '源不存在' }, { status: 404 });
+      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      try {
+        const resp = await fetch(entry.api, {
+          method: 'GET',
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        return NextResponse.json(
+          {
+            ok: resp.ok,
+            status: resp.status,
+            statusText: resp.statusText,
+          },
+          {
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
+      } catch (e) {
+        clearTimeout(timeoutId);
+        return NextResponse.json(
+          {
+            ok: false,
+            error: '请求失败或超时',
+          },
+          {
+            status: 200,
+            headers: {
+              'Cache-Control': 'no-store',
+            },
+          }
+        );
       }
     }
 
