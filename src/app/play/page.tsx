@@ -198,9 +198,9 @@ function PlayPageClient() {
   // 工具函数（Utils）
   // -----------------------------------------------------------------------------
 
+  // 播放源优选函数
   const preferBestSource = async (
-    sources: SearchResult[],
-    onRanked?: (rankedSources: SearchResult[]) => void
+    sources: SearchResult[]
   ): Promise<SearchResult> => {
     if (sources.length === 1) return sources[0];
 
@@ -271,9 +271,6 @@ function PlayPageClient() {
 
     if (successfulResults.length === 0) {
       console.warn('所有播放源测速都失败，使用第一个播放源');
-      if (onRanked) {
-        onRanked(sources);
-      }
       return sources[0];
     }
 
@@ -302,6 +299,7 @@ function PlayPageClient() {
     const minPing = validPings.length > 0 ? Math.min(...validPings) : 50;
     const maxPing = validPings.length > 0 ? Math.max(...validPings) : 1000;
 
+    // 计算每个结果的评分
     const resultsWithScore = successfulResults.map((result) => ({
       ...result,
       score: calculateSourceScore(
@@ -312,13 +310,8 @@ function PlayPageClient() {
       ),
     }));
 
+    // 按综合评分排序，选择最佳播放源
     resultsWithScore.sort((a, b) => b.score - a.score);
-
-    const rankedSources = resultsWithScore.map((r) => r.source);
-
-    if (onRanked) {
-      onRanked(rankedSources);
-    }
 
     console.log('播放源评分排序结果:');
     resultsWithScore.forEach((result, index) => {
@@ -331,9 +324,10 @@ function PlayPageClient() {
       );
     });
 
-    return rankedSources[0];
+    return resultsWithScore[0].source;
   };
 
+  // 计算播放源综合评分
   const calculateSourceScore = (
     testResult: {
       quality: string;
@@ -346,6 +340,7 @@ function PlayPageClient() {
   ): number => {
     let score = 0;
 
+    // 分辨率评分 (40% 权重)
     const qualityScore = (() => {
       switch (testResult.quality) {
         case '4K':
@@ -366,10 +361,12 @@ function PlayPageClient() {
     })();
     score += qualityScore * 0.4;
 
+    // 下载速度评分 (40% 权重) - 基于最大速度线性映射
     const speedScore = (() => {
       const speedStr = testResult.loadSpeed;
       if (speedStr === '未知' || speedStr === '测量中...') return 30;
 
+      // 解析速度值
       const match = speedStr.match(/^([\d.]+)\s*(KB\/s|MB\/s)$/);
       if (!match) return 30;
 
@@ -377,23 +374,27 @@ function PlayPageClient() {
       const unit = match[2];
       const speedKBps = unit === 'MB/s' ? value * 1024 : value;
 
+      // 基于最大速度线性映射，最高100分
       const speedRatio = speedKBps / maxSpeed;
       return Math.min(100, Math.max(0, speedRatio * 100));
     })();
     score += speedScore * 0.4;
 
+    // 网络延迟评分 (20% 权重) - 基于延迟范围线性映射
     const pingScore = (() => {
       const ping = testResult.pingTime;
-      if (ping <= 0) return 0;
+      if (ping <= 0) return 0; // 无效延迟给默认分
 
+      // 如果所有延迟都相同，给满分
       if (maxPing === minPing) return 100;
 
+      // 线性映射：最低延迟=100分，最高延迟=0分
       const pingRatio = (maxPing - ping) / (maxPing - minPing);
       return Math.min(100, Math.max(0, pingRatio * 100));
     })();
     score += pingScore * 0.2;
 
-    return Math.round(score * 100) / 100;
+    return Math.round(score * 100) / 100; // 保留两位小数
   };
 
   // 更新视频地址
@@ -695,8 +696,7 @@ function PlayPageClient() {
         }
       }
 
-      let hasAppliedLimitedSources = false;
-
+      // 未指定源和 id 或需要优选，且开启优选开关
       if (
         (!currentSource || !currentId || needPreferRef.current) &&
         optimizationEnabled
@@ -704,16 +704,7 @@ function PlayPageClient() {
         setLoadingStage('preferring');
         setLoadingMessage('⚡ 正在优选最佳播放源...');
 
-        detailData = await preferBestSource(sourcesInfo, (rankedSources) => {
-          const topSources = rankedSources.slice(0, 10);
-          setAvailableSources(topSources);
-          hasAppliedLimitedSources = true;
-        });
-      }
-
-      if (!hasAppliedLimitedSources) {
-        const limitedSources = sourcesInfo.slice(0, 10);
-        setAvailableSources(limitedSources);
+        detailData = await preferBestSource(sourcesInfo);
       }
 
       console.log(detailData.source, detailData.id);
